@@ -78,6 +78,9 @@ void setup()
   Serial.begin(115200);
   usb_hid.begin();
 
+  // wait until device mounted
+  while( !USBDevice.mounted() ) delay(1);
+
   //while ( !Serial ) delay(10);   // wait for native usb
   Serial.println("USB Boot Mouse pass through");
 }
@@ -167,6 +170,10 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
       }
     }
     usb_hid.sendReport(0, (void *)&mouseRpt, sizeof(mouseRpt));
+  }
+  else {
+    static uint32_t drops = 0;
+    Serial.printf("drops=%lu\r\n", ++drops);
   }
 
   // continue to request to receive report
