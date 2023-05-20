@@ -126,6 +126,7 @@ void loop1()
   USBHost.task();
 }
 
+bool Skip_report_id = false;
 
 // Invoked when device with hid interface is mounted
 // Report descriptor is also available for use.
@@ -141,8 +142,32 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
   Serial.printf("HID device address = %d, instance = %d is mounted\r\n", dev_addr, instance);
   Serial.printf("VID = %04x, PID = %04x\r\n", vid, pid);
 
+  const size_t REPORT_INFO_MAX = 8;
+  tuh_hid_report_info_t report_info[REPORT_INFO_MAX];
+  uint8_t report_num = tuh_hid_parse_report_descriptor(report_info,
+      REPORT_INFO_MAX, desc_report, desc_len);
+  Serial.printf("HID descriptor reports:%d\r\n", report_num);
+  bool hid_mouse = false;
+  for (size_t i = 0; i < report_num; i++) {
+    Serial.printf("%d,%d,%d\r\n", report_info[i].report_id, report_info[i].usage,
+        report_info[i].usage_page);
+    Skip_report_id = false;
+    if ((report_info[i].usage_page == 1) && (report_info[i].usage == 2)) {
+      hid_mouse = true;
+      Skip_report_id = (report_info[i].report_id != 0);
+      break;
+    }
+  }
+
+  if (desc_report && desc_len) {
+    for (size_t i = 0; i < desc_len; i++) {
+      Serial.printf("%x,", desc_report[i]);
+    }
+    Serial.println();
+  }
+
   uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-  if (itf_protocol == HID_ITF_PROTOCOL_MOUSE) {
+  if ((itf_protocol == HID_ITF_PROTOCOL_MOUSE) || hid_mouse) {
     Serial.println("HID Mouse");
     if (!tuh_hid_receive_report(dev_addr, instance)) {
       Serial.println("Error: cannot request to receive report");
@@ -158,6 +183,11 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 // Invoked when received report from device via interrupt endpoint
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
     uint8_t const *report, uint16_t len) {
+  if (Skip_report_id) {
+    // Skip first byte which is report ID.
+    report++;
+    len--;
+  }
   if (usb_hid.ready() && (len > 2)) {
     hid_mouse_report_t mouseRpt = {0};
     mouseRpt.buttons = report[0];
