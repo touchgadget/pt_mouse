@@ -50,6 +50,23 @@ SOFTWARE.
  * - CPU Speed must be either 120 or 240 Mhz. Selected via "Menu -> CPU Speed"
  */
 
+// Set to 0 to remove the CDC ACM serial port. Set to 0 if it causes problems.
+// Disabling the CDC port means you must press button(s) on the RP2040 to put
+// in bootloader upload mode before using the IDE to upload.
+// WARNING: The program stops working if USB_DEBUG is set to 0. Leave it on
+// until this is solved.
+#define USB_DEBUG 1
+
+#if USB_DEBUG
+#define DBG_print(...)    Serial.print(__VA_ARGS__)
+#define DBG_println(...)  Serial.println(__VA_ARGS__)
+#define DBG_printf(...)   Serial.printf(__VA_ARGS__)
+#else
+#define DBG_print(...)
+#define DBG_println(...)
+#define DBG_printf(...)
+#endif
+
 // pio-usb is required for rp2040 host
 #include "pio_usb.h"
 #include "pio-usb-host-pins.h"
@@ -75,14 +92,20 @@ Adafruit_USBD_HID usb_hid(desc_hid_report, sizeof(desc_hid_report), HID_ITF_PROT
 
 void setup()
 {
+#if USB_DEBUG
   Serial.begin(115200);
+#else
+  Serial.end();
+#endif
   usb_hid.begin();
 
   // wait until device mounted
   while( !USBDevice.mounted() ) delay(1);
 
-  //while ( !Serial ) delay(10);   // wait for native usb
-  Serial.println("USB Boot Mouse pass through");
+#if USB_DEBUG
+  while ( !Serial ) delay(10);   // wait for native usb
+#endif
+  DBG_println("USB Boot Mouse pass through");
 }
 
 void loop()
@@ -94,15 +117,19 @@ void loop()
 //--------------------------------------------------------------------+
 
 void setup1() {
-  //while ( !Serial ) delay(10);   // wait for native usb
-  Serial.println("Core1 setup to run TinyUSB host with pio-usb");
+#if USB_DEBUG
+  while ( !Serial ) delay(10);   // wait for native usb
+#endif
+  DBG_println("Core1 setup to run TinyUSB host with pio-usb");
 
   // Check for CPU frequency, must be multiple of 120Mhz for bit-banging USB
   uint32_t cpu_hz = clock_get_hz(clk_sys);
   if ( cpu_hz != 120000000UL && cpu_hz != 240000000UL ) {
+#if USB_DEBUG
     while ( !Serial ) delay(10);   // wait for native usb
-    Serial.printf("Error: CPU Clock = %lu, PIO USB require CPU clock must be multiple of 120 Mhz\r\n", cpu_hz);
-    Serial.println("Change your CPU Clock to either 120 or 240 Mhz in Menu->CPU Speed");
+#endif
+    DBG_printf("Error: CPU Clock = %lu, PIO USB require CPU clock must be multiple of 120 Mhz\r\n", cpu_hz);
+    DBG_println("Change your CPU Clock to either 120 or 240 Mhz in Menu->CPU Speed");
     while(1) delay(1);
   }
 
@@ -139,45 +166,53 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
   uint16_t vid, pid;
   tuh_vid_pid_get(dev_addr, &vid, &pid);
 
-  Serial.printf("HID device address = %d, instance = %d is mounted\r\n", dev_addr, instance);
-  Serial.printf("VID = %04x, PID = %04x\r\n", vid, pid);
+  DBG_printf("HID device address = %d, instance = %d is mounted\r\n", dev_addr, instance);
+  DBG_printf("VID = %04x, PID = %04x\r\n", vid, pid);
+  uint8_t const protocol_mode = tuh_hid_get_protocol(dev_addr, instance);
+  uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+  DBG_printf("protocol_mode=%d,itf_protocol=%d\r\n",
+      protocol_mode, itf_protocol);
 
   const size_t REPORT_INFO_MAX = 8;
   tuh_hid_report_info_t report_info[REPORT_INFO_MAX];
   uint8_t report_num = tuh_hid_parse_report_descriptor(report_info,
       REPORT_INFO_MAX, desc_report, desc_len);
-  Serial.printf("HID descriptor reports:%d\r\n", report_num);
+  DBG_printf("HID descriptor reports:%d\r\n", report_num);
   bool hid_mouse = false;
   for (size_t i = 0; i < report_num; i++) {
-    Serial.printf("%d,%d,%d\r\n", report_info[i].report_id, report_info[i].usage,
+    DBG_printf("%d,%d,%d\r\n", report_info[i].report_id, report_info[i].usage,
         report_info[i].usage_page);
     Skip_report_id = false;
     if ((report_info[i].usage_page == 1) && (report_info[i].usage == 2)) {
       hid_mouse = true;
-      Skip_report_id = (report_info[i].report_id != 0);
+      if (itf_protocol == HID_ITF_PROTOCOL_NONE)
+        Skip_report_id = report_info[i].report_id != 0;
+      else if (protocol_mode == HID_PROTOCOL_BOOT)
+        Skip_report_id = false;
+      else
+        Skip_report_id = report_info[i].report_id != 0;
       break;
     }
   }
 
   if (desc_report && desc_len) {
     for (size_t i = 0; i < desc_len; i++) {
-      Serial.printf("%x,", desc_report[i]);
+      DBG_printf("%x,", desc_report[i]);
     }
-    Serial.println();
+    DBG_println();
   }
 
-  uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
   if ((itf_protocol == HID_ITF_PROTOCOL_MOUSE) || hid_mouse) {
-    Serial.println("HID Mouse");
+    DBG_println("HID Mouse");
     if (!tuh_hid_receive_report(dev_addr, instance)) {
-      Serial.println("Error: cannot request to receive report");
+      DBG_println("Error: cannot request to receive report");
     }
   }
 }
 
 // Invoked when device with hid interface is un-mounted
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
-  Serial.printf("HID device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
+  DBG_printf("HID device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
 }
 
 // Invoked when received report from device via interrupt endpoint
@@ -203,11 +238,11 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
   }
   else {
     static uint32_t drops = 0;
-    Serial.printf("drops=%lu\r\n", ++drops);
+    DBG_printf("drops=%lu\r\n", ++drops);
   }
 
   // continue to request to receive report
   if (!tuh_hid_receive_report(dev_addr, instance)) {
-    Serial.println("Error: cannot request to receive report");
+    DBG_println("Error: cannot request to receive report");
   }
 }
